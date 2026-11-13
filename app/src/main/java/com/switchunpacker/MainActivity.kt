@@ -31,6 +31,12 @@ class MainActivity : Activity() {
     private val reqKeys = 2
     private val reqOut = 3
     private val reqLegacyStorage = 4
+    private val reqUpdate = 5
+    private val reqDlc = 6
+    private lateinit var updateText: TextView
+    private lateinit var dlcText: TextView
+    private var updateUri: Uri? = null
+    private var dlcUris: List<Uri> = emptyList()
 
     private lateinit var prefs: SharedPreferences
     private lateinit var gameText: TextView
@@ -93,6 +99,24 @@ class MainActivity : Activity() {
         gameText = TextView(this).apply { text = "No file selected" }
         root.addView(gameText)
         root.addView(button("Choose game file") { pick(reqGame) })
+
+        root.addView(label("Update (optional)", true))
+        updateText = TextView(this).apply { text = "None. Pick the update .nsp to merge it into the game." }
+        root.addView(updateText)
+        root.addView(button("Choose update file") { pick(reqUpdate) })
+        root.addView(button("Clear update") {
+            updateUri = null
+            updateText.text = "None. Pick the update .nsp to merge it into the game."
+        })
+
+        root.addView(label("DLC (optional)", true))
+        dlcText = TextView(this).apply { text = "None. You can pick several DLC files." }
+        root.addView(dlcText)
+        root.addView(button("Choose DLC files") { pick(reqDlc, multiple = true) })
+        root.addView(button("Clear DLC") {
+            dlcUris = emptyList()
+            dlcText.text = "None. You can pick several DLC files."
+        })
 
         root.addView(label("2. prod.keys", true))
         keysText = TextView(this).apply { text = "Not loaded" }
@@ -178,10 +202,11 @@ class MainActivity : Activity() {
             .apply()
     }
 
-    private fun pick(code: Int) {
+    private fun pick(code: Int, multiple: Boolean = false) {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
+            if (multiple) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
         startActivityForResult(i, code)
     }
@@ -190,8 +215,21 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) return
+        if (requestCode == reqDlc) {
+            val list = mutableListOf<Uri>()
+            data?.clipData?.let { c -> for (k in 0 until c.itemCount) list += c.getItemAt(k).uri }
+            if (list.isEmpty()) data?.data?.let { list += it }
+            dlcUris = list
+            dlcText.text = if (list.isEmpty()) "None. You can pick several DLC files."
+                else list.joinToString("\n") { PathUtil.displayName(this, it) }
+            return
+        }
         val uri = data?.data ?: return
         when (requestCode) {
+            reqUpdate -> {
+                updateUri = uri
+                updateText.text = PathUtil.displayName(this, uri)
+            }
             reqGame -> {
                 gameUri = uri
                 gameText.text = PathUtil.displayName(this, uri)
@@ -282,24 +320,27 @@ class MainActivity : Activity() {
 
         Thread {
             var wl: PowerManager.WakeLock? = null
-            var copied: File? = null
+            val copiedFiles = mutableListOf<File>()
             try {
                 val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                 wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "switchunpacker:unpack")
                 wl.acquire(6L * 60 * 60 * 1000)
 
-                var input = PathUtil.fileFromUri(uri)
-                if (input == null) {
-                    logLine("Copying the game into app storage first (needs free space) ...")
-                    input = PathUtil.copyToCache(this, uri, PathUtil.displayName(this, uri))
-                    copied = input
+                fun resolve(u: Uri): File {
+                    PathUtil.fileFromUri(u)?.let { return it }
+                    val name = PathUtil.displayName(this, u)
+                    logLine("Copying $name into app storage first (needs free space) ...")
+                    return PathUtil.copyToCache(this, u, name).also { copiedFiles += it }
                 }
-                val result = Unpacker(hactool, ::logLine).unpack(input, out, keysFile, options)
+                val input = resolve(uri)
+                val updateFile = updateUri?.let { resolve(it) }
+                val dlcFiles = dlcUris.map { resolve(it) }
+                val result = Unpacker(hactool, ::logLine).unpack(input, out, keysFile, options, updateFile, dlcFiles)
                 logLine("Done: ${result.absolutePath}")
             } catch (e: Exception) {
                 logLine("Error: ${e.message}")
             } finally {
-                copied?.delete()
+                copiedFiles.forEach { it.delete() }
                 wl?.let { if (it.isHeld) it.release() }
                 runOnUiThread { unpackBtn.isEnabled = true }
             }
