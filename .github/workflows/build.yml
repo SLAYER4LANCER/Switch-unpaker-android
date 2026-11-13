@@ -29,6 +29,10 @@ jobs:
           cd /tmp/hactool
           git checkout 1.4.0 2>/dev/null || true
           cp config.mk.template config.mk
+          # Android's libc hides the FILE struct, so pointer arithmetic on FILE* fails.
+          # Same effect, done through a char* cast.
+          sed -i 's|nca_ctx\.tool_ctx->base_file++;|nca_ctx.tool_ctx->base_file = (FILE *)(((char *)nca_ctx.tool_ctx->base_file) + 1);|' main.c
+          grep -n "base_file = (FILE" main.c
           make -j"$(nproc)" CC="$CC" \
             CFLAGS="-O2 -fPIE -D_FILE_OFFSET_BITS=64 -Wno-everything -I." \
             LDFLAGS="-pie -Wl,-z,max-page-size=16384"
@@ -48,4 +52,3 @@ jobs:
         with:
           name: SwitchUnpacker-apk
           path: app/build/outputs/apk/debug/app-debug.apk
-          
