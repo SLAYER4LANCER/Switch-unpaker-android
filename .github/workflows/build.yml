@@ -35,7 +35,7 @@ jobs:
           grep -n "base_file = (FILE" main.c
           make -j"$(nproc)" CC="$CC" \
             CFLAGS="-O2 -fPIE -D_FILE_OFFSET_BITS=64 -Wno-everything -I." \
-            LDFLAGS="-pie -Wl,-z,max-page-size=16384"
+            LDFLAGS="-pie -Wl,-z,max-page-size=16384 -L./mbedtls/library -lmbedtls -lmbedx509 -lmbedcrypto"
           "$BIN/llvm-strip" hactool
           mkdir -p "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a"
           cp hactool "$GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/libhactool.so"
